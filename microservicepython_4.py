@@ -53,7 +53,7 @@ class Microservice():
     def queuePublishMessage (data):
         try:
 
-            message = { "actionMaterialQueue":1,"dataMaterialQueue":json.loads(data)}
+            message = { "actionMaterialQueue":1,"dataMaterialQueue":data}
             credentials = pika.PlainCredentials('test', 'test')
             parameters = pika.ConnectionParameters('192.168.50.6',5672,'/',credentials)
             connection = pika.BlockingConnection(parameters)
@@ -89,12 +89,17 @@ class Microservice():
         try:
             bodyQueue =json.loads(body)
             actionCategoryQueue = bodyQueue['actionCategoryQueue']
-            dataCategory = json.loads(bodyQueue['dataCategory'])
-            actionCategory = dataCategory['action']
+            actionCategory = bodyQueue ['dataCategory']['action']
             if actionCategoryQueue == 1:
                 if actionCategory == 1:
                     message = { "actionMaterialQueue":1,"dataCategoryQueue":body}
-                    return json.dumps(message, indent=4, sort_keys=True, cls=DecimalEncoder)     
+                    return json.dumps(message, indent=4, sort_keys=True, cls=DecimalEncoder)
+                else:
+                   message = { "actionMaterialQueue":0,"dataCategoryQueue":body}
+                   return  json.dumps(message, indent=4, sort_keys=True, cls=DecimalEncoder) 
+            else:       
+                message = { "actionMaterialQueue":0,"dataCategoryQueue":body}
+                return  json.dumps(message, indent=4, sort_keys=True, cls=DecimalEncoder)
                     
         except IOError as e:
             message = { "actionMaterialQueue":0,"dataCategoryQueue":body}
@@ -109,7 +114,7 @@ class Microservice():
             channel = connection.channel()
             method_frame, header_frame, body = channel.basic_get('micro_sv')
             if method_frame:
-                response = queueConsumeMessageSaga(body)
+                response = Microservice.queueConsumeMessageSaga(body)
                 channel.basic_ack(method_frame.delivery_tag)
                 return response
             else:
@@ -134,9 +139,9 @@ def registrar_material():
         nombre = req_data['nombre']
         estado = req_data['estado']
         # Para pruebas se crea este método pero debe consumirse desde la cola
-        body = Microservice.buildDummyCategory()
+        #body = Microservice.buildDummyCategory()
         # este método se consume directamente pero se debe consumir desde la cola
-        msg = json.loads(Microservice.queueConsumeMessageSaga(body))
+        msg = json.loads(Microservice.queueConsumeMessage())
 
         actionMaterialQueue = msg['actionMaterialQueue']
         if actionMaterialQueue == 1:
@@ -145,13 +150,33 @@ def registrar_material():
             response = {} 
             response['material'] = json.loads(data)
             response['msg'] = msg
+            if response['material']['action'] != 1:
+                content = json.loads(msg['dataCategoryQueue'])
+                print content ['dataCategory']['id']
+                db = MySQLdb.connect(host="18.188.72.8", user="root", passwd="uniandes1", db="microservices",charset='utf8',use_unicode=True)        
+                cur = db.cursor()
+                query = ("DELETE FROM categoria WHERE  id_categoria= %s")
+                cur.execute(query,[content ['dataCategory']['id']])
+                db.commit()
+            else:
+                print ('bien :)')
+                
         else:
             response = {} 
             response['material'] = json.dumps({"id":0, "nombre":nombre, "estado":estado, "action":0, "message":"No es posible persitir material, por fallos en categoria, se aplica compensacion"}, indent=4, sort_keys=True, cls=DecimalEncoder)
             # aqui irá el mensaje de Queue
             response['msg'] = msg
+            content = json.loads(msg['dataCategoryQueue'])
+            print content ['dataCategory']['id']
+            db = MySQLdb.connect(host="18.188.72.8", user="root", passwd="uniandes1", db="microservices",charset='utf8',use_unicode=True)        
+            cur = db.cursor()
+            query = ("DELETE FROM categoria WHERE  id_categoria= %s")
+            cur.execute(query,[content ['dataCategory']['id']])
+            db.commit()
+
         # quitar esta linea de comentarios para publicar mensaje a productos    
-        #Microservice.queuePublishMessage(response)   
+        print(response)
+        Microservice.queuePublishMessage(response)   
         return  json.dumps(response, indent=4, sort_keys=True, cls=DecimalEncoder)   
 
 if __name__ == '__main__':
